@@ -1,0 +1,105 @@
+pipeline {
+  agent any
+
+  environment {
+    VIRTUAL_ENV = 'venv'
+    PYTHON = "${env.WORKSPACE}/${VIRTUAL_ENV}/bin/python"
+    PIP    = "${env.WORKSPACE}/${VIRTUAL_ENV}/bin/pip"
+    PYTEST = "${env.WORKSPACE}/${VIRTUAL_ENV}/bin/pytest"
+    FLAKE8 = "${env.WORKSPACE}/${VIRTUAL_ENV}/bin/flake8"
+    COVER  = "${env.WORKSPACE}/${VIRTUAL_ENV}/bin/coverage"
+    BANDIT = "${env.WORKSPACE}/${VIRTUAL_ENV}/bin/bandit"
+  }
+
+  stages {
+    stage('Setup') {
+      steps {
+        sh '''
+          if [ ! -d "${VIRTUAL_ENV}" ]; then
+            python -m venv ${VIRTUAL_ENV}
+          fi
+          . ${VIRTUAL_ENV}/bin/activate
+          ${PIP} install --upgrade pip
+          ${PIP} install -r requirements.txt
+        '''
+      }
+    }
+
+    stage('Lint') {
+      steps {
+        sh '''
+          . ${VIRTUAL_ENV}/bin/activate
+          ${FLAKE8} app.py
+        '''
+      }
+    }
+
+    stage('Test') {
+      steps {
+        sh '''
+          . ${VIRTUAL_ENV}/bin/activate
+          ${PYTEST} -q
+        '''
+      }
+      post {
+        always {
+          junit allowEmptyResults: true, testResults: '**/junit*.xml'
+        }
+      }
+    }
+
+    stage('Coverage') {
+      steps {
+        sh '''
+          . ${VIRTUAL_ENV}/bin/activate
+          ${COVER} run -m pytest
+          ${COVER} report -m
+          ${COVER} html -d coverage_html
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'coverage_html/**', fingerprint: true, onlyIfSuccessful: false
+        }
+      }
+    }
+
+    stage('Security Scan') {
+      steps {
+        sh '''
+          . ${VIRTUAL_ENV}/bin/activate
+          ${BANDIT} -r . -f txt -o bandit_report.txt || true
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'bandit_report.txt', fingerprint: true, onlyIfSuccessful: false
+        }
+      }
+    }
+
+    stage('Deploy') {
+      steps {
+        sh '''
+          . ${VIRTUAL_ENV}/bin/activate
+          # Simple "local deploy": package an artifact and show app output
+          echo "Packaging artifact..."
+          mkdir -p dist
+          echo "greet_output=$(${PYTHON} -c 'from app import greet; print(greet(\"World\"))')" | tee dist/deploy_output.txt
+        '''
+      }
+      post {
+        always {
+          archiveArtifacts artifacts: 'dist/**', fingerprint: true, onlyIfSuccessful: false
+          echo 'Deploying application...'
+        }
+      }
+    }
+  }
+
+  post {
+    always {
+      cleanWs()
+    }
+  }
+}
